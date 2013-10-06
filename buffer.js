@@ -1,45 +1,61 @@
+( // Module boilerplate to support browser globals and AMD.
+    (typeof define === 'function' && function (m) { define('Buffer', m); }) ||
+    (function (m) { window.Buffer = m(); })
+)(function () {
+
+    'use strict';
+
     function Buffer(subject, encoding) {
         switch(typeof subject) {
             case 'string':
-                this.length = Buffer.byteLength(subject, encoding = encoding || 'utf8');
-                break;
+                var buf = createBufferBySize(Buffer.byteLength(subject, encoding = encoding || 'utf8'));
+
+                buf.write(subject, 0, encoding);
+
+                return buf;
             case 'number':
-                this.length = subject > 0 ? Math.floor(subject) : 0;
-                break;
+                return createBufferBySize(subject > 0 ? Math.floor(subject) : 0);
             case 'object':
-                this.length = Number(subject.length) > 0 ? Math.floor(subject.length) : 0;
-                break;
+                if(isArray(subject) || subject instanceof ArrayBuffer) {
+                    return createBufferFromSource(subject);
+                }
+                else if(Buffer.isBuffer(subject)) {
+                    var buf = createBufferBySize(subject.length);
+
+                    subject.copy(buf, 0, 0, buf.length);
+
+                    return buf;
+                }
             default:
                 throw new TypeError('must start with number, buffer, array or string');
         }
-
-        if(subject instanceof ArrayBuffer || isArray(subject)) {
-            this._buf = subject;
-        }
-        else {
-            this._buf = new ArrayBuffer(this.length);
-        }
-
-        if(Buffer.isBuffer(subject)) {
-            subject.copy(this, 0, 0, this.length);
-        }
-        else if(typeof subject === 'string') {
-            this.write(subject, 0, encoding);
-        }
     }
 
-    Buffer.prototype = {
+    function createBufferFromSource(source, offset, length) {
+        return extend(new Uint8Array(source, offset, length), proto);
+    }
+
+    function createBufferBySize(length) {
+        return extend(new Uint8Array(new ArrayBuffer(length)), proto);
+    }
+
+    var proto = {
         constructor: Buffer,
+        valueOf: function () {
+            return this.buffer;
+        },
         toString: function (encoding, start, end) {
+            var len = this.length;
+
             encoding = String(encoding || 'utf8').toLowerCase();
-            start = start >>> 0;
-            end = end == null? this.length : end >>> 0;
+            start = ~~start;
+            end = isUndefined(end)? len : ~~end;
 
             if(start < 0) {
                 start = 0;
             }
-            if(end > this.length) {
-                end = this.length;
+            if(end > len) {
+                end = len;
             }
             if(end <= start) {
                 return '';
@@ -51,20 +67,20 @@
             switch(encoding) {
                 case 'utf8':
                 case 'utf-8':
-                    return utf8Read(this._buf, offset, length);
+                    return utf8Read(this, offset, length);
                 case 'ucs2':
                 case 'ucs-2':
                 case 'utf16le':
                 case 'utf-16le':
-                    return ucs2Read(this._buf, offset, length);
+                    return ucs2Read(this, offset, length);
                 case 'hex':
-                    return hexRead(this._buf, offset, length);
+                    return hexRead(this, offset, length);
                 case 'raw':
                 case 'ascii':
                 case 'binary':
-                    return rawRead(this._buf, offset, length);
+                    return rawRead(this, offset, length);
                 case 'base64':
-                    return base64Read(this._buf, offset, length);
+                    return base64Read(this, offset, length);
                 default:
                     throw new TypeError('Unknown encoding: ' + encoding);
             }
@@ -72,23 +88,8 @@
         toJSON: function () {
             return {
                 type: 'Buffer',
-                data: Array.prototype.slice.call(this._buf, 0)
+                data: Array.prototype.slice.call(this, 0)
             };
-        },
-        get: function (index) {
-            var view = new Uint8Array(this._buf);
-
-            return view[index];
-        },
-        set: function (index, value) {
-            var view = new Uint8Array(this._buf);
-
-            if(isArray(value) || value instanceof ArrayBuffer) {
-                view.set(value, index);
-            }
-            else {
-                view[index] = value;
-            }
         },
         write: function (s, offset, length, encoding) {
             // allow write(string, encoding)
@@ -98,9 +99,9 @@
             }
             // allow write(string, offset[, length], encoding)
             else if(isFinite(offset)) {
-                offset = Number(offset);
+                offset = ~~offset;
                 if(isFinite(length)) {
-                    length = Number(length);
+                    length = ~~length;
                 }
                 else {
                     encoding = length;
@@ -123,31 +124,131 @@
             switch(encoding) {
                 case 'utf-8':
                 case 'utf8':
-                    return utf8Write(this._buf, s, offset, length);
+                    return utf8Write(this, s, offset, length);
                 case 'ucs2':
                 case 'ucs-2':
                 case 'utf16le':
                 case 'utf-16le':
-                    return ucs2Write(this._buf, s, offset, length);
+                    return ucs2Write(this, s, offset, length);
                 case 'hex':
-                    return hexWrite(this._buf, s, offset, length);
+                    return hexWrite(this, s, offset, length);
                 case 'raw':
                 case 'ascii':
                 case 'binary':
-                    return rawWrite(this._buf, s, offset, length);
+                    return rawWrite(this, s, offset, length);
                 case 'base64':
-                    return base64Write(this._buf, s, offset, length);
+                    return base64Write(this, s, offset, length);
                 default:
                     throw new TypeError('Unknown encoding: ' + encoding);
             }
         },
         slice: function (start, end) {
-            return new Buffer(this._buf.slice(start, end));
+            var len = this.length;
+
+            start = ~~start;
+            end = isUndefined(end) ? len : ~~end;
+
+            if(start < 0) {
+                start += len;
+
+                if(start < 0) {
+                    start = 0;
+                }
+            }
+            else if(start > len) {
+                start = len;
+            }
+
+            if(end < 0) {
+                end += len;
+
+                if(end < 0) {
+                    end = 0;
+                }
+            }
+            else if(end > len) {
+                end = len;
+            }
+
+            if(end < start) {
+                end = start;
+            }
+
+            return createBufferFromSource(this.buffer, start, end);
         },
         copy: function (targetBuffer, targetStart, sourceStart, sourceEnd) {
-            targetBuffer.set(targetStart, this._buf.slice(sourceStart, sourceEnd));
+            var len = this.length;
+
+            targetStart = ~~targetStart;
+            sourceStart = ~~sourceStart;
+            sourceEnd = isUndefined(sourceEnd) ? len : ~~sourceEnd;
+
+            if(!inRange(sourceEnd, sourceStart, len)) {
+                sourceEnd = len;
+            }
+
+            if(targetStart < 0 || targetStart > targetBuffer.length) {
+                targetStart = 0;
+            }
+
+            if(sourceStart < 0 || sourceStart > sourceEnd) {
+                sourceStart = 0;
+            }
+
+            for(var i = 0, l = sourceEnd - sourceStart; i < l; i++) {
+                targetBuffer[i + targetStart] = this[i + sourceStart];
+            }
+        },
+        fill: function (value, offset, end) {
+            var len = this.length;
+
+            offset = ~~offset;
+            end = isUndefined(end)? len : ~~end;
+
+            if(!inRange(end, 0, len)) {
+                end = len;
+            }
+
+            if(offset < 0 || offset > end) {
+                offset = 0;
+            }
+
+            var n = 0;
+
+            switch(typeof value) {
+                case 'string':
+                    if(value.length) {
+                        n = value.charCodeAt(0);
+                        break;
+                    }
+                default:
+                    n = ~~value;
+            }
+
+            for(var i = offset; i < end; i++) {
+                this[i] = n;
+            }
+        },
+        inspect: function () {
+            var str = '';
+            var max = Buffer.INSPECT_MAX_BYTES;
+
+            if(this.length > 0) {
+                str = this.toString('hex', 0, max).match(/.{2}/g).join(' ');
+                if(this.length > max) {
+                    str += ' ... ';
+                }
+            }
+
+            return '<Buffer ' + str + '>';
         }
     };
+
+    function checkOffset(offset, ext, length) {
+        if(offset < 0 || offset + ext > length) {
+            throw new RangeError('index out of range');
+        }
+    }
 
     var methods = {
         Int8: 'Int8',
@@ -167,22 +268,24 @@
     };
 
     for(var method in methods) {
-        Buffer.prototype['read' + method] = function (offset, noAssert) {
-            var view = new DataView(this._buf),
-                le = method.substr(-2, 2) === 'LE';
-
-            return view['get' + methods[method]](offset, le);
+        proto['read' + method] = function (offset, noAssert) {
+            return (new DataView(this.buffer))['get' + methods[method]](
+                ~~offset,
+                method.substr(-2, 2) === 'LE'
+            );
         };
-        Buffer.prototype['write' + method] = function (offset, noAssert) {
-            var view = new DataView(this._buf),
-                le = method.substr(-2, 2) === 'LE';
-
-            return view['set' + methods[method]](offset, le);
+        proto['write' + method] = function (value, offset, noAssert) {
+            return (new DataView(this.buffer))['set' + methods[method]](
+                ~~offset,
+                +value,
+                method.substr(-2, 2) === 'LE'
+            );
         };
     }
 
     Buffer.isBuffer = function (subject) {
-        return subject instanceof Buffer;
+        /* duck typing */
+        return subject.toString === proto.toString;
     };
 
     Buffer.isEncoding = function (encoding) {
@@ -216,7 +319,7 @@
             }
         }
         else {
-            length = Number(length);
+            length = ~~length;
         }
 
         if(length < 0) {
@@ -278,21 +381,18 @@
     }
 
     function base64Read(buf, offset, length) {
-        var view = new Uint8Array(buf),
-            s = "";
+        var s = "";
 
         for(var i = offset; i < length; i++) {
-            s += window.btoa(view[i]);
+            s += window.btoa(buf[i]);
         }
 
         return s;
     }
 
     function base64Write(buf, s, offset, length) {
-        var view = new Uint8Array(buf);
-
         for(var i = 0, n = offset; n - offset < length && i < s.length; i++) {
-            view[n++] = window.atob(s.charCodeAt(i));
+            buf[n++] = window.atob(s.charCodeAt(i));
         }
 
         return n - offset;
@@ -306,14 +406,18 @@
     }
 
     function rawRead(buf, offset, length) {
-        return String.fromCharCode.apply(String, new Uint8Array(buf, offset, length));
+        var s = "";
+
+        for(var i = offset; i < length; i++) {
+            s += String.fromCharCode(buf[i]);
+        }
+
+        return s;
     }
 
     function rawWrite(buf, s, offset, length) {
-        var view = new Uint8Array(buf);
-
         for(var i = 0, n = offset; n - offset < length && i < s.length; i++) {
-            view[n++] = s.charCodeAt(i);
+            buf[n++] = s.charCodeAt(i);
         }
 
         return n - offset;
@@ -333,8 +437,7 @@
     }
 
     function ucs2Read(buf, offset, length) {
-        var view = new Uint8Array(buf),
-            s = "", n, charCode, leadByte = null, leadSurrogate = null,
+        var s = "", n, charCode, leadByte = null, leadSurrogate = null,
             toStringChars = function (charCode) {
                 if(charCode <= 0xFFFF) {
                     s += String.fromCharCode(charCode);
@@ -347,7 +450,7 @@
             };
 
         for(var i = offset; i < length; i++) {
-            n = view[i];
+            n = buf[i];
 
             if(leadByte === null) {
                 leadByte = n;
@@ -379,11 +482,10 @@
     }
 
     function ucs2Write(buf, s, offset, length) {
-        var view = new Uint8Array(buf),
-            n = offset,
+        var n = offset,
             toViewBytes = function (charCode) {
-                view[n++] = charCode & 0x00FF;
-                view[n++] = charCode >> 8;
+                buf[n++] = charCode & 0x00FF;
+                buf[n++] = charCode >> 8;
             };
 
         for(var i = 0; n - offset < length && i < s.length; i++) {
@@ -412,22 +514,23 @@
         return s.length >>> 1;
     }
 
+    function toHex(n) {
+        return (n < 16? '0' : '') + n.toString(16);
+    }
+
     function hexRead(buf, offset, length) {
-        var view = new Uint8Array(buf),
-            s = "";
+        var s = "";
 
         for(var i = offset; i < length; i++) {
-            s += view[i].toString(16);
+            s += toHex(buf[i]);
         }
 
         return s;
     }
 
     function hexWrite(buf, s, offset, length) {
-        var view = new Uint8Array(buf);
-
-        for(var i = 0, n = offset; n - offset < length && i < s.length; i += 2) {
-            view[n++] = parseInt(s.substr(i, 2), 16);
+        for(var i = 0, n = offset; n - offset < length && i < s.length; i++) {
+            buf[n++] = parseInt(s.substr(i * 2, 2), 16);
         }
 
         return n - offset;
@@ -449,23 +552,22 @@
     }
 
     function utf8Read(buf, offset, length) {
-        var view = new Uint8Array(buf),
-            s = "";
+        var s = "";
 
         for(var n, i = offset; i < length; i++) {
-            n = view[i];
+            n = buf[i];
             s += String.fromCharCode(
                 n > 251 && n < 254 && i + 5 < length? /* six bytes */
                 /* (n - 252 << 32) is not possible in ECMAScript! So...: */
-                (n - 252) * 1073741824 + (view[++i] - 128 << 24) + (view[++i] - 128 << 18) + (view[++i] - 128 << 12) + (view[++i] - 128 << 6) + view[++i] - 128
+                (n - 252) * 1073741824 + (buf[++i] - 128 << 24) + (buf[++i] - 128 << 18) + (buf[++i] - 128 << 12) + (buf[++i] - 128 << 6) + buf[++i] - 128
                 : n > 247 && n < 252 && i + 4 < length? /* five bytes */
-                (n - 248 << 24) + (view[++i] - 128 << 18) + (view[++i] - 128 << 12) + (view[++i] - 128 << 6) + view[++i] - 128
+                (n - 248 << 24) + (buf[++i] - 128 << 18) + (buf[++i] - 128 << 12) + (buf[++i] - 128 << 6) + buf[++i] - 128
                 : n > 239 && n < 248 && i + 3 < length? /* four bytes */
-                (n - 240 << 18) + (view[++i] - 128 << 12) + (view[++i] - 128 << 6) + view[++i] - 128
+                (n - 240 << 18) + (buf[++i] - 128 << 12) + (buf[++i] - 128 << 6) + buf[++i] - 128
                 : n > 223 && n < 240 && i + 2 < length? /* three bytes */
-                (n - 224 << 12) + (view[++i] - 128 << 6) + view[++i] - 128
+                (n - 224 << 12) + (buf[++i] - 128 << 6) + buf[++i] - 128
                 : n > 191 && n < 224 && i + 1 < length? /* two bytes */
-                (n - 192 << 6) + view[++i] - 128
+                (n - 192 << 6) + buf[++i] - 128
                 : n /* n < 127 ? */ /* one byte */
             );
         }
@@ -474,53 +576,55 @@
     }
 
     function utf8Write(buf, s, offset, length) {
-        var view = new Uint8Array(buf);
-
         for(var i = 0, n = offset; n - offset < length && i < s.length; i++) {
             var charCode = s.charCodeAt(i);
 
             /* one byte */
             if(charCode < 0x80) {
-                view[n++] = charCode;
+                buf[n++] = charCode;
             }
             /* two bytes */
             else if(charCode < 0x800) {
-                view[n++] = 192 + (charCode >>> 6);
-                view[n++] = 128 + (charCode & 63);
+                buf[n++] = 192 + (charCode >>> 6);
+                buf[n++] = 128 + (charCode & 63);
             }
             /* three bytes */
             else if(charCode < 0x10000) {
-                view[n++] = 224 + (charCode >>> 12);
-                view[n++] = 128 + (charCode >>> 6 & 63);
-                view[n++] = 128 + (charCode & 63);
+                buf[n++] = 224 + (charCode >>> 12);
+                buf[n++] = 128 + (charCode >>> 6 & 63);
+                buf[n++] = 128 + (charCode & 63);
             }
             /* four bytes */
             else if(charCode < 0x200000) {
-                view[n++] = 240 + (charCode >>> 18);
-                view[n++] = 128 + (charCode >>> 12 & 63);
-                view[n++] = 128 + (charCode >>> 6 & 63);
-                view[n++] = 128 + (charCode & 63);
+                buf[n++] = 240 + (charCode >>> 18);
+                buf[n++] = 128 + (charCode >>> 12 & 63);
+                buf[n++] = 128 + (charCode >>> 6 & 63);
+                buf[n++] = 128 + (charCode & 63);
             }
             else if (charCode < 0x4000000) {
             /* five bytes */
-                view[n++] = 248 + (charCode >>> 24);
-                view[n++] = 128 + (charCode >>> 18 & 63);
-                view[n++] = 128 + (charCode >>> 12 & 63);
-                view[n++] = 128 + (charCode >>> 6 & 63);
-                view[n++] = 128 + (charCode & 63);
+                buf[n++] = 248 + (charCode >>> 24);
+                buf[n++] = 128 + (charCode >>> 18 & 63);
+                buf[n++] = 128 + (charCode >>> 12 & 63);
+                buf[n++] = 128 + (charCode >>> 6 & 63);
+                buf[n++] = 128 + (charCode & 63);
             }
             /* six bytes */
             else /* if (charCode <= 0x7fffffff) */ {
-                view[n++] = 252 + /* (charCode >>> 32) is not possible in ECMAScript! So...: */ (charCode / 1073741824);
-                view[n++] = 128 + (charCode >>> 24 & 63);
-                view[n++] = 128 + (charCode >>> 18 & 63);
-                view[n++] = 128 + (charCode >>> 12 & 63);
-                view[n++] = 128 + (charCode >>> 6 & 63);
-                view[n++] = 128 + (charCode & 63);
+                buf[n++] = 252 + /* (charCode >>> 32) is not possible in ECMAScript! So...: */ (charCode / 1073741824);
+                buf[n++] = 128 + (charCode >>> 24 & 63);
+                buf[n++] = 128 + (charCode >>> 18 & 63);
+                buf[n++] = 128 + (charCode >>> 12 & 63);
+                buf[n++] = 128 + (charCode >>> 6 & 63);
+                buf[n++] = 128 + (charCode & 63);
             }
         }
 
         return n - offset;
+    }
+
+    function isUndefined(subject) {
+        return typeof subject === 'undefined';
     }
 
     function isArray(subject) {
@@ -535,3 +639,20 @@
     function inRange(n, min, max) {
         return min <= n && n <= max;
     }
+
+    function extend(target, source) {
+        var slice = Array.prototype.slice,
+            hasOwnProperty = Object.prototype.hasOwnProperty;
+
+        slice.call(arguments, 1).forEach(function (o) {
+            for(var key in o) {
+                hasOwnProperty.call(o, key) && (target[key] = o[key]);
+            }
+        });
+
+        return target;
+    }
+
+    return Buffer;
+
+});
