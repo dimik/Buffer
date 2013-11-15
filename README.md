@@ -12,7 +12,7 @@ And can be used within browser environment.
 Example
 ------------
 ```javascript
-var str = '𐐀 мир труд 𝄞май€';
+var str = '𐐀 𝄞 € Мир Труд Май';
 var utf16Buf = new Buffer(str, 'utf16le');
 
 console.log('buffer', utf16Buf, utf16Buffer.toString('utf16le'));
